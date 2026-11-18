@@ -1,0 +1,84 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: careermatch_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-careermatch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_locally}
+      POSTGRES_DB: ${POSTGRES_DB:-careermatch}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-careermatch} -d ${POSTGRES_DB:-careermatch}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: careermatch_api
+    restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    volumes:
+      - ./backend:/app
+    environment:
+      ENV: ${ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-careermatch}:${POSTGRES_PASSWORD:-change_me_locally}@db:5432/${POSTGRES_DB:-careermatch}
+      CHECKPOINT_DB_URL: postgresql://${POSTGRES_USER:-careermatch}:${POSTGRES_PASSWORD:-change_me_locally}@db:5432/${POSTGRES_DB:-careermatch}
+      JWT_SECRET: ${JWT_SECRET:-9a8f33c1c8c641771ff76a7bd0b5988352c54d0e9e1b9bfa25b4ee2d7c7be710}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-10080}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gemini-2.5-flash}
+      LLM_RERANK_MODEL: ${LLM_RERANK_MODEL:-gemini-2.5-flash}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-gemini-embedding-001}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-admin_secret_dev_token}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: careermatch_web
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: careermatch_worker
+    restart: unless-stopped
+    command: python worker.py
+    environment:
+      ENV: ${ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-careermatch}:${POSTGRES_PASSWORD:-change_me_locally}@db:5432/${POSTGRES_DB:-careermatch}
+      CHECKPOINT_DB_URL: postgresql://${POSTGRES_USER:-careermatch}:${POSTGRES_PASSWORD:-change_me_locally}@db:5432/${POSTGRES_DB:-careermatch}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-admin_secret_dev_token}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
